@@ -61,6 +61,7 @@ input.t{width:100%;padding:10px;border-radius:10px;border:1px solid var(--line);
 .nav .l{flex:1;text-align:center;font-weight:600;min-width:160px}
 .nav button:disabled{opacity:.35}
 .chips{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 14px}.chips .opt{flex:0 0 auto;padding:12px 14px;font-size:15px}
+.mrow{display:flex;justify-content:space-between;width:100%;padding:14px;margin-bottom:8px;background:var(--card);border:1px solid var(--line);border-radius:12px;color:var(--ink);font-size:16px;text-align:left}.mrow.off{opacity:.5}
 #pv,#ex{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);align-items:center;justify-content:center;z-index:9}
 .pc{background:var(--card);border-radius:14px;padding:16px;width:min(360px,92vw);max-height:92%;overflow:auto}
 #pvr{font:12px/1.35 "Courier New",monospace;background:#fff;color:#000;padding:12px;margin-bottom:12px}
@@ -100,7 +101,7 @@ input.t{width:100%;padding:10px;border-radius:10px;border:1px solid var(--line);
 // ---- EDIT HERE: restaurant details and menu (prices include IVA) ----
 const SHOP={name:"O MEU HAMBÚRGUER",addr:"Rua Exemplo 1, 3000-000 Coimbra",nif:"000000000",foot:"Obrigado e volte sempre!"};
 const VAT={food:13,drink:23}; // check current rates with your accountant
-const MENU=[
+let MENU=[
  {c:"Burgers",n:"Classic Burger",p:7.5,v:"food"},
  {c:"Burgers",n:"Cheeseburger",p:8.2,v:"food"},
  {c:"Burgers",n:"Bacon Burger",p:9.0,v:"food"},
@@ -117,6 +118,9 @@ const MENU=[
  {c:"Drinks",n:"Sagres Beer",p:2.2,v:"drink"},
  {c:"Drinks",n:"Coffee",p:1.0,v:"drink"}
 ].map((m,i)=>({...m,id:i}));
+try{const sv=JSON.parse(localStorage.getItem("menu")||"null");if(Array.isArray(sv)&&sv.length)MENU=sv}catch(e){}
+const saveMenu=()=>{try{localStorage.setItem("menu",JSON.stringify(MENU))}catch(e){}};
+const M=i=>MENU.find(m=>m.id==i);
 // Extras (paid, same IVA as the item) and removals (free), by menu category
 const BS={ex:[{n:"Extra cheese",p:.5},{n:"Bacon",p:1},{n:"Fried egg",p:.8},{n:"Extra patty",p:2.5},{n:"Avocado",p:1},{n:"Extra sauce",p:.3}],no:["No onion","No pickles","No tomato","No lettuce","No sauce"]};
 const OPTS={Burgers:BS,Sandwiches:BS,Sides:{ex:[{n:"Cheese sauce",p:.8},{n:"Extra dip",p:.5}],no:[]}};
@@ -124,8 +128,8 @@ const EXTRA_NAMES=[...new Set(Object.values(OPTS).flatMap(o=>o.ex.map(e=>e.n)))]
 // ---------------------------------------------------------------------
 const eur=n=>n.toLocaleString("pt-PT",{style:"currency",currency:"EUR"});
 const $=id=>document.getElementById(id);
-const cats=[...new Set(MENU.map(m=>m.c))];
-let cat=cats[0],cart={},type="Mesa",pay="Dinheiro",orderNo=1,orders=[],hf="Today",pv="",pvo=null,cur=null;
+const cats=()=>[...new Set(MENU.filter(m=>!m.off).map(m=>m.c))];
+let ed=null,edErr="",del=false,cat=cats()[0]||"Menu",cart={},type="Mesa",pay="Dinheiro",orderNo=1,orders=[],hf="Today",pv="",pvo=null,cur=null;
 let sp="Day",so=0;
 const dayKey=()=>new Date().toLocaleDateString("en-CA");
 let orderDay=dayKey();
@@ -138,26 +142,86 @@ const TYPES={"Mesa":"Dine in","Take-away":"Take away"},PAYS=["Dinheiro","Cartão
 
 function draw(){
  rollDay();
- $("ex").style.display=cur?"flex":"none";$("exb").innerHTML=cur?exHtml():"";
+ if(!["History","Stats","Menu","Export"].includes(cat)&&!cats().includes(cat))cat=cats()[0]||"Menu";
+ $("ex").style.display=(cur||ed)?"flex":"none";$("exb").innerHTML=ed?edHtml():cur?exHtml():"";
  $("pvm").textContent="";
  $("pv").style.display=pv?"flex":"none";$("pvr").innerHTML=pv;
- $("tabs").innerHTML=[...cats,"History","Stats"].map(c=>`<button class="tab ${c==cat?"on":""}" data-c="${c}">${c=="History"?"📋 History":c=="Stats"?"📊 Stats":c}</button>`).join("");
- $("grid").className=(cat=="History"||cat=="Stats")?"":"grid";
- $("grid").innerHTML=cat=="History"?hist():cat=="Stats"?stats():MENU.filter(m=>m.c==cat).map(m=>`<button class="item" data-i="${m.id}"><b>${m.n}</b><span>${eur(m.p)}</span></button>`).join("");
+ $("tabs").innerHTML=[...cats(),"History","Stats","Menu","Export"].map(c=>`<button class="tab ${c==cat?"on":""}" data-c="${c}">${c=="History"?"📋 History":c=="Stats"?"📊 Stats":c=="Menu"?"⚙ Menu":c=="Export"?"💾 Export":c}</button>`).join("");
+ $("grid").className=(["History","Stats","Menu","Export"].includes(cat))?"":"grid";
+ $("grid").innerHTML=cat=="History"?hist():cat=="Stats"?stats():cat=="Menu"?menuView():cat=="Export"?exportView():MENU.filter(m=>m.c==cat&&!m.off).map(m=>`<button class="item" data-i="${m.id}"><b>${m.n}</b><span>${eur(m.p)}</span></button>`).join("");
  $("type").innerHTML=Object.keys(TYPES).map(t=>`<button class="opt ${t==type?"on":""}" data-t="${t}">${TYPES[t]}</button>`).join("");
  $("pay").innerHTML=PAYS.map(p=>`<button class="opt ${p==pay?"on":""}" data-p="${p}">${p}</button>`).join("");
  const ids=Object.keys(cart);
- $("lines").innerHTML=ids.length?ids.map(k=>{const l=cart[k],m=MENU[l.i],o=OPTS[m.c]||{ex:[],no:[]},sub=[...l.ex.map(x=>"+ "+o.ex[x].n),...l.no.map(x=>"– "+o.no[x])].join(", ");return `<div class="line"><div class="n">${m.n}${sub?`<br><small style="color:var(--mut)">${sub}</small>`:""}<br><small style="color:var(--mut)">${eur(unit(l)*l.q)}</small></div><button class="q" data-d="${k}">−</button><b>${l.q}</b><button class="q" data-u="${k}">+</button></div>`}).join(""):`<p style="color:var(--mut)">Tap items to add them.</p>`;
+ $("lines").innerHTML=ids.length?ids.map(k=>{const l=cart[k],m=M(l.i),o=OPTS[m.c]||{ex:[],no:[]},sub=[...l.ex.map(x=>"+ "+o.ex[x].n),...l.no.map(x=>"– "+o.no[x])].join(", ");return `<div class="line"><div class="n">${m.n}${sub?`<br><small style="color:var(--mut)">${sub}</small>`:""}<br><small style="color:var(--mut)">${eur(unit(l)*l.q)}</small></div><button class="q" data-d="${k}">−</button><b>${l.q}</b><button class="q" data-u="${k}">+</button></div>`}).join(""):`<p style="color:var(--mut)">Tap items to add them.</p>`;
  $("total").textContent=eur(total());
  $("print").disabled=!ids.length;
  $("no").textContent="#"+String(orderNo).padStart(3,"0");
 }
-const unit=l=>{const m=MENU[l.i],o=OPTS[m.c];return m.p+l.ex.reduce((s,x)=>s+o.ex[x].p,0)};
+const unit=l=>{const m=M(l.i),o=OPTS[m.c];return m.p+l.ex.reduce((s,x)=>s+o.ex[x].p,0)};
 const total=()=>Object.values(cart).reduce((s,l)=>s+unit(l)*l.q,0);
 const addLine=(i,ex,no)=>{const k=i+"|"+ex.join(",")+"|"+no.join(",");(cart[k]=cart[k]||{i,ex,no,q:0}).q++};
 const tg=(a,v)=>{const j=a.indexOf(v);j<0?a.push(v):a.splice(j,1)};
 const ds=x=>x.q+"x "+x.n+((x.ex&&x.ex.length)||(x.no&&x.no.length)?" ("+[...(x.ex||[]).map(e=>"+"+e.n),...(x.no||[])].join(", ")+")":"");
-function exHtml(){const m=MENU[cur.i],o=OPTS[m.c],u=m.p+cur.ex.reduce((s,k)=>s+o.ex[k].p,0);
+function menuView(){
+ const cs=[...new Set(MENU.map(m=>m.c))];
+ return `<div class="nav"><div class="l" style="text-align:left">Tap an item to edit it</div><button class="opt" data-ma="1">+ Add item</button></div>`+
+ cs.map(c=>`<h3 style="margin:14px 0 8px">${esc(c)}</h3>`+MENU.filter(m=>m.c==c).map(m=>`<button class="mrow ${m.off?"off":""}" data-me="${m.id}"><span>${esc(m.n)}${m.off?" · sold out":""}</span><b>${eur(m.p)}</b></button>`).join("")).join("");
+}
+function edHtml(){
+ return `<h3 style="margin:0 0 10px">${ed.id==null?"New item":"Edit item"}</h3>
+ <input class="t" id="en" placeholder="Name" value="${esc(ed.n)}">
+ <input class="t" id="ep" inputmode="decimal" placeholder="Price incl. IVA, e.g. 7.50" value="${esc(ed.p)}">
+ <input class="t" id="ec" list="cl" placeholder="Category" value="${esc(ed.c)}"><datalist id="cl">${[...new Set(MENU.map(m=>m.c))].map(c=>`<option value="${esc(c)}">`).join("")}</datalist>
+ <div class="row"><button class="opt ${ed.v=="food"?"on":""}" data-ev="food">Food (IVA ${VAT.food}%)</button><button class="opt ${ed.v=="drink"?"on":""}" data-ev="drink">Drink (IVA ${VAT.drink}%)</button></div>
+ <div class="row"><button class="opt ${ed.off?"":"on"}" data-eo="0">Available</button><button class="opt ${ed.off?"on":""}" data-eo="1">Sold out</button></div>
+ <div style="color:var(--mut);font-size:12px;margin-bottom:8px">Extras are offered for Burgers, Sandwiches and Sides.</div>
+ <div style="color:var(--acc);font-size:13px;min-height:16px;margin-bottom:6px">${edErr}</div>
+ <button class="go" id="edsave">Save</button>
+ ${ed.id==null?"":`<button class="sec" data-edel="1">${del?"Tap again to delete this item":"Delete item"}</button>`}
+ <button class="sec" id="edcl">Cancel</button>`;
+}
+const dk=t=>new Date(t).toLocaleDateString("en-CA"),wk=t=>{const x=new Date(t);x.setDate(x.getDate()-(x.getDay()+6)%7);return dk(+x)};
+const catOf=n=>{const m=MENU.find(m=>m.n==n);return m?m.c:"Other"},n2=v=>(Math.round(v*100)/100).toFixed(2).replace(".",",");
+const cq=v=>{v=String(v);return /[;"\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v};
+const csv=(h,rows)=>"\uFEFF"+[h,...rows].map(r=>r.map(cq).join(";")).join("\r\n");
+const safe=t=>String(t).replace(/[\\/:*?"<>|]/g,"-").trim()||"Other";
+function lineRows(){const R=[];orders.slice().reverse().forEach(o=>o.items.forEach(x=>{const b={t:o.ts,ono:o.no,pay:o.pay,r:x.r};
+ R.push({...b,cat:catOf(x.n),item:x.n,q:x.q,unit:x.b??x.p,gross:(x.b??x.p)*x.q,note:(x.no||[]).join(", ")});
+ (x.ex||[]).forEach(e=>R.push({...b,cat:"Extras",item:"+ "+e.n,q:x.q,unit:e.p,gross:e.p*x.q,note:"on "+x.n}))}));return R}
+function makeZip(files){
+ const te=new TextEncoder(),parts=[],cd=[];let off=0;const n=new Date(),dt=((n.getFullYear()-1980)<<9)|((n.getMonth()+1)<<5)|n.getDate(),tm=(n.getHours()<<11)|(n.getMinutes()<<5)|(n.getSeconds()>>1);
+ files.forEach(f=>{const nm=te.encode(f.name),d=te.encode(f.data);let c=-1;for(let i=0;i<d.length;i++){c^=d[i];for(let k=0;k<8;k++)c=c&1?(c>>>1)^0xEDB88320:c>>>1}c=(c^-1)>>>0;
+  const h=new DataView(new ArrayBuffer(30));h.setUint32(0,0x04034b50,true);h.setUint16(4,20,true);h.setUint16(6,0x0800,true);h.setUint16(10,tm,true);h.setUint16(12,dt,true);h.setUint32(14,c,true);h.setUint32(18,d.length,true);h.setUint32(22,d.length,true);h.setUint16(26,nm.length,true);
+  parts.push(new Uint8Array(h.buffer),nm,d);
+  const e=new DataView(new ArrayBuffer(46));e.setUint32(0,0x02014b50,true);e.setUint16(4,20,true);e.setUint16(6,20,true);e.setUint16(8,0x0800,true);e.setUint16(12,tm,true);e.setUint16(14,dt,true);e.setUint32(16,c,true);e.setUint32(20,d.length,true);e.setUint32(24,d.length,true);e.setUint16(28,nm.length,true);e.setUint32(42,off,true);
+  cd.push(new Uint8Array(e.buffer),nm);off+=30+nm.length+d.length});
+ const cs=cd.reduce((s,a)=>s+a.length,0),z=new DataView(new ArrayBuffer(22));z.setUint32(0,0x06054b50,true);z.setUint16(8,files.length,true);z.setUint16(10,files.length,true);z.setUint32(12,cs,true);z.setUint32(16,off,true);
+ const all=[...parts,...cd,new Uint8Array(z.buffer)],out=new Uint8Array(all.reduce((s,a)=>s+a.length,0));let p=0;all.forEach(a=>{out.set(a,p);p+=a.length});return out;
+}
+function buildExport(){
+ const R=lineRows(),F=[],vat=(g,r)=>g-g/(1+r/100);
+ F.push({name:"Orders.csv",data:csv(["Date","Time","Order","Type","Table","Payment","Items","Total","IVA"],orders.slice().reverse().map(o=>[dk(o.ts),new Date(o.ts).toLocaleTimeString("pt-PT"),o.no,o.type,o.table||"",o.pay,o.items.map(ds).join(" | "),n2(o.total),n2(o.items.reduce((s,x)=>s+vat(x.p*x.q,x.r),0))]))});
+ const agg={};R.forEach(r=>{const k=dk(r.t)+"|"+r.r,a=agg[k]=agg[k]||{d:dk(r.t),w:wk(r.t),m:dk(r.t).slice(0,7),r:r.r,g:0};a.g+=r.gross});
+ F.push({name:"IVA summary.csv",data:csv(["Date","Week starting (Mon)","Month","IVA rate %","Sales incl. IVA","Base","IVA"],Object.values(agg).sort((a,b)=>a.d<b.d?-1:a.d>b.d?1:a.r-b.r).map(a=>[a.d,a.w,a.m,a.r,n2(a.g),n2(a.g/(1+a.r/100)),n2(vat(a.g,a.r))]))});
+ F.push({name:"Menu.csv",data:csv(["Category","Item","Price","Type","Available"],MENU.map(m=>[m.c,m.n,n2(m.p),m.v,m.off?"no":"yes"]))});
+ const by={};R.forEach(r=>(by[r.cat]=by[r.cat]||[]).push(r));
+ Object.keys(by).forEach(c=>F.push({name:safe(c)+"/Sales.csv",data:csv(["Date","Time","Order","Item","Qty","Unit price","Total","IVA rate %","IVA","Payment","Note"],by[c].map(r=>[dk(r.t),new Date(r.t).toLocaleTimeString("pt-PT"),r.ono,r.item,r.q,n2(r.unit),n2(r.gross),r.r,n2(vat(r.gross,r.r)),r.pay,r.note]))}));
+ return makeZip(F);
+}
+let exMsg="";
+async function exportData(){
+ const name="order-desk-data-"+dk(Date.now())+".zip",file=new File([buildExport()],name,{type:"application/zip"});
+ try{
+  if(navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title:name});exMsg="Choose Save to Files, pick a folder, then tap Save."}
+  else{const a=document.createElement("a");a.href=URL.createObjectURL(file);a.download=name;a.click();exMsg="Saved to your Downloads folder."}
+ }catch(e){exMsg=e&&e.name=="AbortError"?"":"Could not save the file."}
+ draw();
+}
+function exportView(){return `<div class="hs"><div><small>Orders saved</small><b>${orders.length}</b></div><div><small>Menu items</small><b>${MENU.length}</b></div></div>
+<p>Saves one ZIP file with everything: <b>Orders.csv</b>, <b>IVA summary.csv</b> (per day, with week and month columns), <b>Menu.csv</b>, and one folder per category (for example Burgers, Sandwiches, Sides, Drinks, Extras), each with its own <b>Sales.csv</b>.</p>
+<button class="go" style="max-width:320px" data-exp="1">Save data to Files</button>
+<p style="color:var(--mut)">${exMsg||"Tap the button, choose Save to Files, pick or create a folder such as Order Desk, then tap Save. Tap the ZIP in Files to unzip it."}</p>`}
+function exHtml(){const m=M(cur.i),o=OPTS[m.c],u=m.p+cur.ex.reduce((s,k)=>s+o.ex[k].p,0);
  return `<h3 style="margin:0 0 4px">${m.n}</h3><div style="color:var(--mut)">${eur(m.p)}</div>
  ${o.ex.length?`<div style="margin-top:12px"><b>Extras</b></div><div class="chips">${o.ex.map((e,k)=>`<button class="opt ${cur.ex.includes(k)?"on":""}" data-xe="${k}">${e.n} +${eur(e.p)}</button>`).join("")}</div>`:""}
  ${o.no.length?`<div><b>Remove</b></div><div class="chips">${o.no.map((n,k)=>`<button class="opt ${cur.no.includes(k)?"on":""}" data-xn="${k}">${n}</button>`).join("")}</div>`:""}
@@ -230,15 +294,34 @@ function stats(){
  l.forEach(o=>o.items.forEach(x=>{add(x.n,"Other",x.q,x.q*(x.b??x.p),o.ts);(x.ex||[]).forEach(e=>add("+ "+e.n,"Extras",x.q,x.q*e.p,o.ts))}));
  const R=Object.values(rows).sort((x,y)=>y.q-x.q||x.n.localeCompare(y.n)),I=R.filter(r=>r.c!="Extras"),tq=I.reduce((s,r)=>s+r.q,0),tr=R.reduce((s,r)=>s+r.r,0);
  const tk=bk.map((_,i)=>I.reduce((s,r)=>s+r.k[i],0)),z=v=>v?v:`<span class="z">0</span>`;
+ const iv={},ib=bk.map(()=>({}));
+ l.forEach(o=>{const bi=bk.findIndex(k=>o.ts>=k.a&&o.ts<k.b);o.items.forEach(x=>{const g=x.p*x.q,ba=g/(1+x.r/100),t=iv[x.r]=iv[x.r]||{g:0,b:0,v:0};t.g+=g;t.b+=ba;t.v+=g-ba;if(bi>=0)ib[bi][x.r]=(ib[bi][x.r]||0)+g-ba})});
+ const rates=[...new Set([...Object.values(VAT),...Object.keys(iv)].map(Number))].sort((a,b)=>a-b),z0=v=>v?eur(v):`<span class="z">–</span>`,T={g:0,b:0,v:0};
+ const ivaH=`<h3 style="margin:16px 0 8px">IVA collected</h3><div class="sw"><table class="st"><thead><tr><th>Rate</th><th>Sales incl. IVA</th><th>Base</th><th>IVA</th>${bk.map(k=>`<th>${k.l}</th>`).join("")}</tr></thead><tbody>
+ ${rates.map(r=>{const t=iv[r]||{g:0,b:0,v:0};T.g+=t.g;T.b+=t.b;T.v+=t.v;return `<tr><td>${r}%</td><td>${z0(t.g)}</td><td>${z0(t.b)}</td><td>${z0(t.v)}</td>${ib.map(c=>`<td>${z0(c[r])}</td>`).join("")}</tr>`}).join("")}</tbody>
+ <tfoot><tr><td>Total</td><td>${eur(T.g)}</td><td>${eur(T.b)}</td><td>${eur(T.v)}</td>${ib.map(c=>`<td>${z0(Object.values(c).reduce((s,v)=>s+v,0))}</td>`).join("")}</tr></tfoot></table></div>
+ <p style="color:var(--mut);font-size:13px">Estimate from saved orders. Not a tax return; check figures with your accountant.</p>`;
  return `<div class="tabs">${["Day","Week","Month"].map(p=>`<button class="tab ${p==sp?"on":""}" data-sp="${p}">${p}</button>`).join("")}</div>
  <div class="nav"><button class="opt" data-so="-1">‹ Previous</button><div class="l">${lab}</div><button class="opt" data-so="1" ${so>=0?"disabled":""}>Next ›</button><button class="opt" data-so="0" ${so==0?"disabled":""}>Current</button></div>
  <div class="hs"><div><small>Orders</small><b>${l.length}</b></div><div><small>Items sold</small><b>${tq}</b></div><div><small>Revenue</small><b>${eur(tr)}</b></div><div><small>Best seller</small><b style="font-size:16px">${tq?I[0].n:"-"}</b></div></div>
  <div class="sw"><table class="st"><thead><tr><th>Item</th><th>Qty</th><th>Revenue</th><th>Share</th>${bk.map(k=>`<th>${k.l}</th>`).join("")}</tr></thead><tbody>
  ${R.map(r=>`<tr><td>${r.n}<br><small style="color:var(--mut)">${r.c}</small></td><td>${z(r.q)}</td><td>${r.r?eur(r.r):`<span class="z">–</span>`}</td><td>${tr?Math.round(r.r/tr*100)+"%":"–"}</td>${r.k.map(v=>`<td>${z(v)}</td>`).join("")}</tr>`).join("")}</tbody>
- <tfoot><tr><td>Total</td><td>${tq}</td><td>${eur(tr)}</td><td>${tr?"100%":"–"}</td>${tk.map(v=>`<td>${v}</td>`).join("")}</tr></tfoot></table></div>`;
+ <tfoot><tr><td>Total</td><td>${tq}</td><td>${eur(tr)}</td><td>${tr?"100%":"–"}</td>${tk.map(v=>`<td>${v}</td>`).join("")}</tr></tfoot></table></div>${ivaH}`;
 }
 document.addEventListener("click",e=>{
  const b=e.target.closest("button");if(!b)return;const d=b.dataset;
+ if(ed&&$("en")){ed.n=$("en").value;ed.p=$("ep").value;ed.c=$("ec").value}
+ if(!d.edel)del=false;
+ if(d.ma){ed={id:null,n:"",p:"",c:cats()[0]||"Burgers",v:"food",off:false};edErr=""}
+ if(d.me!==undefined){const m=M(d.me);ed={id:m.id,n:m.n,p:String(m.p),c:m.c,v:m.v,off:!!m.off};edErr=""}
+ if(d.ev)ed.v=d.ev;
+ if(d.eo!==undefined)ed.off=d.eo=="1";
+ if(b.id=="edcl")ed=null;
+ if(d.edel){if(del){MENU=MENU.filter(m=>m.id!=ed.id);Object.keys(cart).forEach(k=>{if(cart[k].i==ed.id)delete cart[k]});saveMenu();ed=null;del=false}else del=true}
+ if(b.id=="edsave"){const p=Number(String(ed.p).replace(",",".").trim()),n=ed.n.trim(),c=ed.c.trim();
+  if(!n)edErr="Enter a name.";else if(!c)edErr="Enter a category.";else if(String(ed.p).trim()===""||!isFinite(p)||p<0)edErr="Enter a valid price, e.g. 7.50";
+  else{edErr="";const v={c,n,p:Math.round(p*100)/100,v:ed.v,off:ed.off};if(ed.id==null)MENU.push({id:Math.max(-1,...MENU.map(m=>m.id))+1,...v});else Object.assign(M(ed.id),v);saveMenu();ed=null}}
+ if(d.exp){exportData();return}
  if(b.id=="pvp"){doPrint(pv);return}
  if(b.id=="pvs"){savePdf();return}
  if(b.id=="pvc"){pv="";pvo=null}
@@ -247,7 +330,7 @@ document.addEventListener("click",e=>{
  if(d.sp){sp=d.sp;so=0}
  if(d.so!==undefined)so=d.so=="0"?0:Math.min(0,so+Number(d.so));
  if(d.r){const o=orders.find(x=>x.ts==d.r);if(o){pv=receipt(o,true);pvo={o,d:1}}}
- if(d.i!==undefined){if(OPTS[MENU[d.i].c])cur={i:+d.i,ex:[],no:[]};else addLine(+d.i,[],[])}
+ if(d.i!==undefined){if(OPTS[M(d.i).c])cur={i:+d.i,ex:[],no:[]};else addLine(+d.i,[],[])}
  if(d.xe!==undefined)tg(cur.ex,+d.xe);
  if(d.xn!==undefined)tg(cur.no,+d.xn);
  if(b.id=="exadd"){addLine(cur.i,[...cur.ex].sort((a,c)=>a-c),[...cur.no].sort((a,c)=>a-c));cur=null}
@@ -258,7 +341,7 @@ document.addEventListener("click",e=>{
  if(b.id=="clear"){cart={};$("tbl").value=""}
  if(b.id=="reprint"){if(orders[0]){pv=receipt(orders[0],true);pvo={o:orders[0],d:1}}else alert("No receipt yet.")}
  if(b.id=="print"){
-  rollDay();const o={no:orderNo,ts:Date.now(),type,table:$("tbl").value.trim(),pay,total:total(),items:Object.values(cart).map(l=>{const m=MENU[l.i],op=OPTS[m.c]||{ex:[],no:[]},ex=l.ex.map(k=>op.ex[k]);return{n:m.n,q:l.q,b:m.p,p:unit(l),r:VAT[m.v],ex:ex.map(e=>({n:e.n,p:e.p})),no:l.no.map(k=>op.no[k])}})};
+  rollDay();const o={no:orderNo,ts:Date.now(),type,table:$("tbl").value.trim(),pay,total:total(),items:Object.values(cart).map(l=>{const m=M(l.i),op=OPTS[m.c]||{ex:[],no:[]},ex=l.ex.map(k=>op.ex[k]);return{n:m.n,q:l.q,b:m.p,p:unit(l),r:VAT[m.v],ex:ex.map(e=>({n:e.n,p:e.p})),no:l.no.map(k=>op.no[k])}})};
   orders.unshift(o);orderNo++;save();cart={};$("tbl").value="";pv=receipt(o);pvo={o,d:0};
  }
  draw();
