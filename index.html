@@ -62,6 +62,12 @@ input.t{width:100%;padding:10px;border-radius:10px;border:1px solid var(--line);
 .nav button:disabled{opacity:.35}
 .chips{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 14px}.chips .opt{flex:0 0 auto;padding:12px 14px;font-size:15px}
 .pad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:320px;margin:12px auto}.pad button{padding:18px;font-size:22px;border-radius:14px;border:1px solid var(--line);background:var(--card);color:var(--ink)}.pad button:active{background:var(--line)}
+.kg{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.tk{background:var(--card);border:2px solid var(--line);border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:6px}
+.tk.warn{border-color:#e0a030}.tk.late{border-color:#d33}
+.th{display:flex;justify-content:space-between;align-items:baseline;font-size:18px;gap:6px}
+.ti{font-size:19px}.tx{font-size:15px;color:var(--mut);margin-left:26px}.tx.r{color:var(--acc)}
+.app.kt{grid-template-columns:1fr}.app.kt .cart{display:none}
 .mrow{display:flex;justify-content:space-between;width:100%;padding:14px;margin-bottom:8px;background:var(--card);border:1px solid var(--line);border-radius:12px;color:var(--ink);font-size:16px;text-align:left}.mrow.off{opacity:.5}
 #pv,#ex{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);align-items:center;justify-content:center;z-index:9}
 .pc{background:var(--card);border-radius:14px;padding:16px;width:min(360px,92vw);max-height:92%;overflow:auto}
@@ -82,7 +88,7 @@ input.t{width:100%;padding:10px;border-radius:10px;border:1px solid var(--line);
 <div class="app">
  <div class="menu"><div class="tabs" id="tabs"></div><div class="grid" id="grid"></div></div>
  <div class="cart">
-  <h2>Order <span id="no" style="color:var(--mut);font-weight:400"></span></h2>
+  <h2>Order <span id="no" style="color:var(--mut);font-weight:400"></span><small id="kst" style="float:right;color:var(--mut);font-weight:400"></small></h2>
   <div class="lines" id="lines"></div>
   <div class="foot">
    <div class="row" id="type"></div>
@@ -153,8 +159,13 @@ const EXTRA_NAMES=[...new Set(Object.values(OPTS).flatMap(o=>o.ex.map(e=>e.n)))]
 // ---------------------------------------------------------------------
 const eur=n=>n.toLocaleString("pt-PT",{style:"currency",currency:"EUR"});
 const $=id=>document.getElementById(id);
+let kdb="",kcode="",kq={},kcon=null,kok=false,kinit=false,kmsg="",kundo=null,ksnd=false,kbusy=false,outbox=[],ac=null,wl=null;
+try{kdb=localStorage.getItem("kdb")||"";kcode=localStorage.getItem("kcode")||"";outbox=JSON.parse(localStorage.getItem("outbox")||"[]")}catch(e){}
+try{const m=location.hash.match(/k=([^&]+)/);if(m){const c=JSON.parse(atob(decodeURIComponent(m[1])));if(c.u&&c.c){kdb=c.u;kcode=c.c;localStorage.setItem("kdb",kdb);localStorage.setItem("kcode",kcode)}history.replaceState(null,"",location.pathname+location.search)}}catch(e){}
+let kfu=kdb,kfc=kcode;
 const cats=()=>[...new Set(MENU.filter(m=>!m.off).map(m=>m.c))];
 let ed=null,edErr="",del=false,cat=cats()[0]||"Menu",cart={},type="Mesa",pay="Dinheiro",orderNo=1,orders=[],hf="Today",pv="",pvo=null,cur=null;
+try{if(localStorage.getItem("startK")&&kdb&&kcode)cat="Kitchen"}catch(e){}
 let sp="Day",so=0;
 const dayKey=()=>new Date().toLocaleDateString("en-CA");
 let orderDay=dayKey();
@@ -167,13 +178,16 @@ const TYPES={"Mesa":"Dine in","Take-away":"Take away"},PAYS=["Dinheiro","Cartão
 
 function draw(){
  rollDay();
- if(!["History","Stats","Menu","Export"].includes(cat)&&!cats().includes(cat))cat=cats()[0]||"Menu";
+ document.querySelector(".app").classList.toggle("kt",cat=="Kitchen");
+ if(cat=="Kitchen"){if(!kcon&&kdb&&kcode)kConnect();kWake()}else if(kcon){kcon.close();kcon=null;kok=false;kinit=false}
+ $("kst").textContent=kdb&&kcode?(outbox.length?"🍳 "+outbox.length+" waiting to send":"🍳 Kitchen on"):"";
+ if(!["History","Stats","Menu","Export","Kitchen"].includes(cat)&&!cats().includes(cat))cat=cats()[0]||"Menu";
  $("ex").style.display=(cur||ed)?"flex":"none";$("exb").innerHTML=ed?edHtml():cur?exHtml():"";
  $("pvm").textContent="";
  $("pv").style.display=pv?"flex":"none";$("pvr").innerHTML=pv;
- $("tabs").innerHTML=[...cats(),"History","Stats","Menu","Export"].map(c=>`<button class="tab ${c==cat?"on":""}" data-c="${c}">${c=="History"?"📋 History":c=="Stats"?"📊 Stats":c=="Menu"?"⚙ Menu":c=="Export"?"💾 Export":c}</button>`).join("");
- $("grid").className=(["History","Stats","Menu","Export"].includes(cat))?"":"grid";
- $("grid").innerHTML=cat=="History"?hist():cat=="Stats"?stats():cat=="Menu"?menuView():cat=="Export"?exportView():MENU.filter(m=>m.c==cat&&!m.off).map(m=>`<button class="item" data-i="${m.id}"><b>${m.n}</b><span>${eur(m.p)}</span></button>`).join("");
+ $("tabs").innerHTML=[...cats(),"History","Stats","Kitchen","Menu","Export"].map(c=>`<button class="tab ${c==cat?"on":""}" data-c="${c}">${c=="History"?"📋 History":c=="Stats"?"📊 Stats":c=="Menu"?"⚙ Menu":c=="Export"?"💾 Export":c=="Kitchen"?"🍳 Kitchen":c}</button>`).join("");
+ $("grid").className=(["History","Stats","Menu","Export","Kitchen"].includes(cat))?"":"grid";
+ $("grid").innerHTML=cat=="History"?hist():cat=="Stats"?stats():cat=="Menu"?menuView():cat=="Export"?exportView():cat=="Kitchen"?kitchenView():MENU.filter(m=>m.c==cat&&!m.off).map(m=>`<button class="item" data-i="${m.id}"><b>${m.n}</b><span>${eur(m.p)}</span></button>`).join("");
  $("type").innerHTML=Object.keys(TYPES).map(t=>`<button class="opt ${t==type?"on":""}" data-t="${t}">${TYPES[t]}</button>`).join("");
  $("pay").innerHTML=PAYS.map(p=>`<button class="opt ${p==pay?"on":""}" data-p="${p}">${p}</button>`).join("");
  const ids=Object.keys(cart);
@@ -192,7 +206,7 @@ function menuView(){
  if(pinS)return pinView();
  const cs=[...new Set(MENU.map(m=>m.c))];
  return `<div class="nav"><div class="l" style="text-align:left">Tap an item to edit it</div><button class="opt" data-ma="1">+ Add item</button><button class="opt" data-cp="1">Change PIN</button><button class="opt" data-lk="1">Lock</button></div>`+
- cs.map(c=>`<h3 style="margin:14px 0 8px">${esc(c)}</h3>`+MENU.filter(m=>m.c==c).map(m=>`<button class="mrow ${m.off?"off":""}" data-me="${m.id}"><span>${esc(m.n)}${m.off?" · sold out":""}</span><b>${eur(m.p)}</b></button>`).join("")).join("");
+ cs.map(c=>`<h3 style="margin:14px 0 8px">${esc(c)}</h3>`+MENU.filter(m=>m.c==c).map(m=>`<button class="mrow ${m.off?"off":""}" data-me="${m.id}"><span>${esc(m.n)}${m.off?" · sold out":""}</span><b>${eur(m.p)}</b></button>`).join("")).join("")+kSettings();
 }
 function edHtml(){
  return `<h3 style="margin:0 0 10px">${ed.id==null?"New item":"Edit item"}</h3>
@@ -248,6 +262,57 @@ function exportView(){return `<div class="hs"><div><small>Orders saved</small><b
 <p>Saves one ZIP file with everything: <b>Orders.csv</b>, <b>IVA summary.csv</b> (per day, with week and month columns), <b>Menu.csv</b>, and one folder per category (for example Burgers, Sandwiches, Sides, Drinks, Extras), each with its own <b>Sales.csv</b>.</p>
 <button class="go" style="max-width:320px" data-exp="1">Save data to Files</button>
 <p style="color:var(--mut)">${exMsg||"Tap the button, choose Save to Files, pick or create a folder such as Order Desk, then tap Save. Tap the ZIP in Files to unzip it."}</p>`}
+const toArr=v=>Array.isArray(v)?v:Object.values(v||{});
+const kUrl=k=>kdb+"/kitchen/"+encodeURIComponent(kcode)+(k!==undefined?"/"+k:"")+".json";
+const kLink=()=>location.origin+location.pathname+"#k="+encodeURIComponent(btoa(JSON.stringify({u:kdb,c:kcode})));
+const saveOb=()=>{try{localStorage.setItem("outbox",JSON.stringify(outbox))}catch(e){}};
+function kSend(o){if(!kdb||!kcode)return;
+ outbox.push({op:"put",key:String(o.ts),body:{no:o.no,ts:o.ts,type:o.type,table:o.table||"",items:o.items.map(x=>({n:x.n,q:x.q,ex:(x.ex||[]).map(e=>e.n),no:x.no||[]}))}});saveOb();kFlush()}
+async function kFlush(){
+ if(!kdb||!kcode||kbusy||!outbox.length)return;kbusy=true;
+ try{while(outbox.length){const j=outbox[0],r=await fetch(kUrl(j.key),j.op=="put"?{method:"PUT",body:JSON.stringify(j.body)}:{method:"DELETE"});if(!r.ok)throw 0;outbox.shift();saveOb()}}catch(e){}
+ kbusy=false;draw();
+}
+function kConnect(){
+ if(kcon){kcon.close();kcon=null}
+ if(!kdb||!kcode||typeof EventSource=="undefined")return;
+ const es=kcon=new EventSource(kUrl());
+ es.addEventListener("put",e=>kEv(JSON.parse(e.data),0));
+ es.addEventListener("patch",e=>kEv(JSON.parse(e.data),1));
+ es.onopen=()=>{kok=true;draw()};
+ es.onerror=()=>{kok=false;if(es.readyState==2){kcon=null;setTimeout(()=>{if(cat=="Kitchen")draw()},5000)}draw()};
+ ["cancel","auth_revoked"].forEach(t=>es.addEventListener(t,()=>{es.close();kcon=null;kok=false;setTimeout(()=>{if(cat=="Kitchen")draw()},5000)}));
+}
+function kEv(ev,patch){
+ const before=Object.keys(kq),p=ev.path||"/",d=ev.data;
+ if(p=="/"){if(d===null||d===undefined)kq={};else if(patch)Object.entries(d).forEach(([k,v])=>v===null?delete kq[k]:kq[k]=v);else kq=d}
+ else{const k=p.split("/")[1];if(d===null)delete kq[k];else kq[k]=d}
+ if(kinit&&Object.keys(kq).some(k=>!before.includes(k)))beep();
+ kinit=true;draw();
+}
+function beep(){try{if(!ksnd)return;ac=ac||new(window.AudioContext||window.webkitAudioContext)();const o=ac.createOscillator(),g=ac.createGain();o.connect(g);g.connect(ac.destination);o.frequency.value=880;g.gain.value=.2;o.start();o.stop(ac.currentTime+.35)}catch(e){}}
+function kWake(){try{if(!wl&&navigator.wakeLock)navigator.wakeLock.request("screen").then(l=>{wl=l;l.addEventListener("release",()=>{wl=null})}).catch(()=>{})}catch(e){}}
+async function kTest(){
+ if(!kdb||!kcode){kmsg="Save the address and code first.";draw();return}
+ kmsg="Testing…";draw();
+ try{let r=await fetch(kUrl("_test"),{method:"PUT",body:'"ok"'});if(!r.ok)throw 0;r=await fetch(kUrl("_test"),{method:"DELETE"});if(!r.ok)throw 0;kmsg="Connection works."}catch(e){kmsg="Could not reach the database. Check the address, the rules and the internet."}
+ draw();
+}
+function kitchenView(){
+ if(!kdb||!kcode)return `<p>The kitchen screen isn't set up yet. Open <b>⚙ Menu</b> (PIN needed) and fill in <b>Kitchen connection</b>.</p>`;
+ const now=Date.now(),L=Object.entries(kq).filter(([k,o])=>o&&o.items).map(([k,o])=>({k,...o})).sort((a,b)=>a.ts-b.ts);
+ return `<div class="nav"><div class="l" style="text-align:left">${kok?"● Live":"○ Connecting…"} · ${L.length} open</div><button class="opt" data-snd="1">${ksnd?"🔔 Sound on":"🔕 Sound off"}</button>${kundo?`<button class="opt" data-ku="1">Undo last done</button>`:""}</div>
+ ${L.length?`<div class="kg">${L.map(o=>{const age=Math.floor((now-o.ts)/60000);return `<div class="tk ${age>=15?"late":age>=8?"warn":""}"><div class="th"><b style="font-size:24px">#${String(o.no).padStart(3,"0")}</b><span>${TYPES[o.type]||o.type||""}${o.table?" · "+esc(o.table):""}</span><span>${age} min</span></div>
+ ${toArr(o.items).map(x=>`<div class="ti"><b>${x.q}×</b> ${esc(x.n)}${toArr(x.ex).map(e=>`<div class="tx">+ ${esc(e)}</div>`).join("")}${toArr(x.no).map(n=>`<div class="tx r">− ${esc(n)}</div>`).join("")}</div>`).join("")}
+ <button class="go" style="margin-top:6px" data-kd="${o.k}">Done</button></div>`}).join("")}</div>`:`<p style="color:var(--mut);font-size:18px;text-align:center;margin-top:60px">No open orders</p>`}`;
+}
+function kSettings(){
+ return `<h3 style="margin:22px 0 8px">Kitchen connection</h3><p style="color:var(--mut);font-size:14px">Sends every order to the kitchen screen. Use the same database address and code on every iPad.</p>
+ <input class="t" id="ku" placeholder="Database address (or paste the setup link)" value="${esc(kfu)}"><input class="t" id="kc" placeholder="Kitchen code" value="${esc(kfc)}">
+ <div class="row"><button class="opt" data-kg="1">Generate code</button><button class="opt" data-ks="1">Save</button><button class="opt" data-kt="1">Test connection</button></div>
+ <div style="color:var(--acc);min-height:18px;font-size:14px;margin-bottom:6px">${esc(kmsg)}</div>
+ ${kdb&&kcode?`<p style="font-size:14px">Setup link for the kitchen iPad. Open it there once:</p><input class="t" readonly value="${esc(kLink())}"><button class="opt" style="width:100%" data-kl="1">Share link</button>`:""}`;
+}
 function exHtml(){const m=M(cur.i),o=OPTS[m.c],u=m.p+cur.ex.reduce((s,k)=>s+o.ex[k].p,0);
  return `<h3 style="margin:0 0 4px">${m.n}</h3><div style="color:var(--mut)">${eur(m.p)}</div>
  ${o.ex.length?`<div style="margin-top:12px"><b>Extras</b></div><div class="chips">${o.ex.map((e,k)=>`<button class="opt ${cur.ex.includes(k)?"on":""}" data-xe="${k}">${e.n} +${eur(e.p)}</button>`).join("")}</div>`:""}
@@ -338,6 +403,17 @@ function stats(){
 document.addEventListener("click",e=>{
  const b=e.target.closest("button");if(!b)return;const d=b.dataset;
  if(ed&&$("en")){ed.n=$("en").value;ed.p=$("ep").value;ed.c=$("ec").value}
+ if($("ku")){kfu=$("ku").value;kfc=$("kc").value}
+ if(d.kg)kfc=Array.from(crypto.getRandomValues(new Uint8Array(16)),x=>"abcdefghjkmnpqrstuvwxyz23456789"[x%31]).join("");
+ if(d.ks){if(kfu.includes("#k=")){try{const c=JSON.parse(atob(decodeURIComponent(kfu.split("#k=")[1].split(/[&\s]/)[0])));kfu=c.u;kfc=c.c}catch(e){}}
+  const u=kfu.trim().replace(/\/+$/,""),c=kfc.trim();
+  if(!/^https?:\/\/\S+$/.test(u))kmsg="Enter the database address (it starts with https://).";else if(!/^[A-Za-z0-9_-]{8,}$/.test(c))kmsg="The code needs at least 8 letters or digits.";
+  else{kdb=u;kcode=c;kfu=u;kfc=c;try{localStorage.setItem("kdb",u);localStorage.setItem("kcode",c)}catch(e){}if(kcon){kcon.close();kcon=null}kmsg="Saved."}}
+ if(d.kt){kTest();return}
+ if(d.kl){try{navigator.share({url:kLink()})}catch(e){}}
+ if(d.snd){ksnd=!ksnd;if(ksnd){try{ac=ac||new(window.AudioContext||window.webkitAudioContext)();ac.resume();beep()}catch(e){}}}
+ if(d.kd){const o=kq[d.kd];if(o)kundo={k:d.kd,o};delete kq[d.kd];outbox.push({op:"del",key:d.kd});saveOb();kFlush()}
+ if(d.ku&&kundo){kq[kundo.k]=kundo.o;outbox.push({op:"put",key:kundo.k,body:kundo.o});saveOb();kundo=null;kFlush()}
  if(!d.edel)del=false;
  if(d.k!==undefined&&pinS){const need=pinS.mode=="recover"?8:4;
   if(Date.now()<lockUntil)pinS.msg="Too many wrong tries. Wait a moment and try again.";
@@ -360,7 +436,7 @@ document.addEventListener("click",e=>{
  if(b.id=="pvp"){doPrint(pv);return}
  if(b.id=="pvs"){savePdf();return}
  if(b.id=="pvc"){pv="";pvo=null}
- if(d.c){cat=d.c;if(d.c!="Menu"){unl=false;pinS=null;ed=null}}
+ if(d.c){cat=d.c;try{d.c=="Kitchen"?localStorage.setItem("startK","1"):localStorage.removeItem("startK")}catch(e){}if(d.c!="Menu"){unl=false;pinS=null;ed=null}}
  if(d.h)hf=d.h;
  if(d.sp){sp=d.sp;so=0}
  if(d.so!==undefined)so=d.so=="0"?0:Math.min(0,so+Number(d.so));
@@ -377,11 +453,12 @@ document.addEventListener("click",e=>{
  if(b.id=="reprint"){if(orders[0]){pv=receipt(orders[0],true);pvo={o:orders[0],d:1}}else alert("No receipt yet.")}
  if(b.id=="print"){
   rollDay();const o={no:orderNo,ts:Date.now(),type,table:$("tbl").value.trim(),pay,total:total(),items:Object.values(cart).map(l=>{const m=M(l.i),op=OPTS[m.c]||{ex:[],no:[]},ex=l.ex.map(k=>op.ex[k]);return{n:m.n,q:l.q,b:m.p,p:unit(l),r:VAT[m.v],ex:ex.map(e=>({n:e.n,p:e.p})),no:l.no.map(k=>op.no[k])}})};
-  orders.unshift(o);orderNo++;save();cart={};$("tbl").value="";pv=receipt(o);pvo={o,d:0};
+  orders.unshift(o);orderNo++;save();kSend(o);cart={};$("tbl").value="";pv=receipt(o);pvo={o,d:0};
  }
  draw();
 });
 try{if("serviceWorker"in navigator&&location.protocol=="https:")navigator.serviceWorker.register("sw.js");if(navigator.storage&&navigator.storage.persist)navigator.storage.persist()}catch(e){}
+setInterval(()=>{if(cat=="Kitchen")draw();kFlush()},20000);window.addEventListener("online",kFlush);document.addEventListener("visibilitychange",()=>{if(!document.hidden)draw()});
 draw();
 </script>
 </body></html>
